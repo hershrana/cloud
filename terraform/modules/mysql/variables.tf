@@ -44,9 +44,9 @@ variable "shape_name" {
 }
 
 variable "mysql_version" {
-  description = "MySQL version to deploy."
+  description = "MySQL version to deploy. Leave null to use the OCI default."
   type        = string
-  default     = "8.4.3"
+  default     = null
 }
 
 variable "data_storage_size_in_gb" {

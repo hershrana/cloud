@@ -2,7 +2,15 @@
 # cloud-init: install Nginx and configure reverse proxy to Spring Boot backend
 set -euo pipefail
 
-dnf update -y
+# Swap first so the 1 GB micro instance doesn't OOM during installs.
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
 dnf install -y nginx
 
 cat > /etc/nginx/conf.d/rp-app.conf <<'NGINX'

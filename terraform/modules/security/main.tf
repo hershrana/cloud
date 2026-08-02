@@ -27,7 +27,7 @@ resource "oci_core_network_security_group_security_rule" "compute_ssh_ingress" {
   }
 }
 
-# Allow Spring Boot port from Nginx NSG
+# Allow Spring Boot backend ports (5857 jira, 5855 todo) from Nginx NSG
 resource "oci_core_network_security_group_security_rule" "compute_app_ingress" {
   network_security_group_id = oci_core_network_security_group.compute.id
   direction                 = "INGRESS"
@@ -37,8 +37,8 @@ resource "oci_core_network_security_group_security_rule" "compute_app_ingress" {
 
   tcp_options {
     destination_port_range {
-      min = 8080
-      max = 8080
+      min = 5855
+      max = 5857
     }
   }
 }

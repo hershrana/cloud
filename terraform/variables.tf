@@ -67,6 +67,18 @@ variable "mysql_admin_password" {
 
 # --- Always Free A1 sizing (combined budget: 4 OCPUs / 24 GB) ---
 
+variable "app_instance_shape" {
+  description = "Shape for the Spring Boot instance (Always Free: VM.Standard.A1.Flex or VM.Standard.E2.1.Micro)."
+  type        = string
+  default     = "VM.Standard.A1.Flex"
+}
+
+variable "nginx_instance_shape" {
+  description = "Shape for the Nginx instance (Always Free: VM.Standard.A1.Flex or VM.Standard.E2.1.Micro)."
+  type        = string
+  default     = "VM.Standard.A1.Flex"
+}
+
 variable "app_ocpus" {
   description = "OCPUs for the Spring Boot instance."
   type        = number

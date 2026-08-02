@@ -17,12 +17,6 @@ resource "oci_mysql_mysql_db_system" "main" {
 
   is_highly_available = false
 
-  backup_policy {
-    is_enabled        = true
-    retention_in_days = 7
-    window_start_time = "02:00"
-  }
-
   freeform_tags = {
     Project     = var.context.project_name
     Environment = var.context.environment

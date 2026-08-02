@@ -54,6 +54,7 @@ module "compute" {
   subnet_id           = module.network.public_subnet_id
   nsg_ids             = [module.security.compute_nsg_id]
   availability_domain = module.common.availability_domain
+  instance_shape      = var.app_instance_shape
   ocpus               = var.app_ocpus
   memory_in_gbs       = var.app_memory_in_gbs
 }
@@ -73,6 +74,7 @@ module "nginx" {
   subnet_id           = module.network.public_subnet_id
   nsg_ids             = [module.security.nginx_nsg_id]
   availability_domain = module.common.availability_domain
+  instance_shape      = var.nginx_instance_shape
   backend_ip          = module.compute.private_ip
   ocpus               = var.nginx_ocpus
   memory_in_gbs       = var.nginx_memory_in_gbs

@@ -18,12 +18,6 @@ resource "oci_core_internet_gateway" "igw" {
   enabled        = true
 }
 
-resource "oci_core_nat_gateway" "natgw" {
-  compartment_id = var.context.compartment_id
-  vcn_id         = oci_core_vcn.main.id
-  display_name   = "${var.context.project_name}-natgw"
-}
-
 resource "oci_core_route_table" "public" {
   compartment_id = var.context.compartment_id
   vcn_id         = oci_core_vcn.main.id
@@ -36,16 +30,11 @@ resource "oci_core_route_table" "public" {
   }
 }
 
+# Private subnet has no internet egress; MySQL HeatWave needs none.
 resource "oci_core_route_table" "private" {
   compartment_id = var.context.compartment_id
   vcn_id         = oci_core_vcn.main.id
   display_name   = "${var.context.project_name}-private-rt"
-
-  route_rules {
-    destination       = "0.0.0.0/0"
-    destination_type  = "CIDR_BLOCK"
-    network_entity_id = oci_core_nat_gateway.natgw.id
-  }
 }
 
 resource "oci_core_subnet" "public" {

@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
-# cloud-init bootstrap: install Java 21 and prepare systemd service directory
+# cloud-init bootstrap: swap + Java 21 for the Spring Boot app host.
 set -euo pipefail
 
-dnf update -y
+# Create swap first so the 1 GB micro instance doesn't OOM during installs / running JVMs.
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+# Install only what we need (a full 'dnf update' is too heavy for 1 GB).
 dnf install -y java-21-openjdk-headless
 
 mkdir -p /opt/rp-app

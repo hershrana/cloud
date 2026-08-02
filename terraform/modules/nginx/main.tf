@@ -13,9 +13,13 @@ resource "oci_core_instance" "nginx" {
   display_name        = "${var.context.project_name}-nginx"
   shape               = var.instance_shape
 
-  shape_config {
-    ocpus         = var.ocpus
-    memory_in_gbs = var.memory_in_gbs
+  # shape_config is only valid for flexible shapes; fixed shapes (E2.1.Micro) reject it.
+  dynamic "shape_config" {
+    for_each = can(regex("Flex$", var.instance_shape)) ? [1] : []
+    content {
+      ocpus         = var.ocpus
+      memory_in_gbs = var.memory_in_gbs
+    }
   }
 
   source_details {
