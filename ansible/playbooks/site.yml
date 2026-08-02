@@ -1,0 +1,6 @@
+---
+- name: Full platform provisioning
+  import_playbook: nginx.yml
+
+- name: Deploy Spring Boot application
+  import_playbook: spring_boot.yml

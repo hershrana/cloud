@@ -1,0 +1,46 @@
+---
+- name: Configure Nginx reverse proxy
+  hosts: nginx_servers
+  become: true
+
+  vars:
+    backend_ip: "{{ lookup('env', 'APP_PRIVATE_IP') }}"
+    backend_port: 8080
+    nginx_ssl_enabled: false
+
+  tasks:
+    - name: Ensure Nginx is installed
+      ansible.builtin.dnf:
+        name: nginx
+        state: present
+
+    - name: Deploy Nginx virtual-host configuration
+      ansible.builtin.template:
+        src: ../templates/nginx-vhost.conf.j2
+        dest: /etc/nginx/conf.d/rp-app.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload Nginx
+
+    - name: Ensure Nginx is enabled and running
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Open firewalld ports for HTTP and HTTPS
+      ansible.posix.firewalld:
+        service: "{{ item }}"
+        state: enabled
+        permanent: true
+        immediate: true
+      loop:
+        - http
+        - https
+
+  handlers:
+    - name: Reload Nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded

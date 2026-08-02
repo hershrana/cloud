@@ -1,0 +1,52 @@
+name: Ansible Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Playbook to run (site / nginx / spring_boot)"
+        required: true
+        default: site
+        type: choice
+        options:
+          - site
+          - nginx
+          - spring_boot
+  push:
+    branches: [main]
+    paths:
+      - "ansible/**"
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ansible
+        run: pip install ansible ansible-lint
+
+      - name: Write SSH private key
+        run: |
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+
+      - name: Run playbook
+        env:
+          APP_PUBLIC_IP:   ${{ secrets.APP_PUBLIC_IP }}
+          NGINX_PUBLIC_IP: ${{ secrets.NGINX_PUBLIC_IP }}
+          APP_PRIVATE_IP:  ${{ secrets.APP_PRIVATE_IP }}
+          SSH_PRIVATE_KEY_PATH: /tmp/deploy_key
+          APP_JAR_PATH:    ${{ github.workspace }}/app/target/rp-app.jar
+          SPRING_PROFILE:  prod
+          DB_HOST:         ${{ secrets.DB_HOST }}
+          DB_NAME:         ${{ secrets.DB_NAME }}
+          DB_USERNAME:     ${{ secrets.DB_USERNAME }}
+          DB_PASSWORD:     ${{ secrets.DB_PASSWORD }}
+        run: |
+          PLAYBOOK="${{ github.event.inputs.target || 'site' }}"
+          ansible-playbook \
+            -i ansible/inventory/hosts.yml \
+            ansible/playbooks/${PLAYBOOK}.yml

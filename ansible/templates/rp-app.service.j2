@@ -1,0 +1,17 @@
+[Unit]
+Description=RP App Spring Boot Service
+After=network.target
+
+[Service]
+User={{ app_user }}
+WorkingDirectory={{ app_dir }}
+EnvironmentFile={{ app_dir }}/.env
+ExecStart=/usr/bin/java -jar {{ app_dir }}/rp-app.jar
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rp-app
+
+[Install]
+WantedBy=multi-user.target
