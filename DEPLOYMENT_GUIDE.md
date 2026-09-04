@@ -18,11 +18,15 @@ small to run two JVMs, so it is currently unused/spare):
 | MySQL HeatWave (`jira`, `todo` DBs) | `rpapp.private.rpapp.oraclevcn.com:3306` (private) |
 
 ### Live URLs (already working)
-- Jira UI:  http://137.23.42.212/jira/
-- Todo UI:  http://137.23.42.212/todo/
-- Health:   http://137.23.42.212/health
-- Jira API: http://137.23.42.212/api/jira/... (also `/api/auth/...`)
-- Todo API: http://137.23.42.212/api/tasks/..., `/api/notes/...`, `/api/eod/...`
+- Jira UI:  https://137.23.42.212/jira/
+- Todo UI:  https://137.23.42.212/todo/
+- Health:   https://137.23.42.212/health
+- Jira API: https://137.23.42.212/api/jira/... (also `/api/auth/...`)
+- Todo API: https://137.23.42.212/api/tasks/..., `/api/notes/...`, `/api/eod/...`
+
+> HTTPS uses a **self-signed certificate**, so browsers show a one-time "Not
+> secure" warning — click Advanced → Proceed. Plain HTTP auto-redirects to HTTPS.
+> For a trusted cert, add a domain + Let's Encrypt later.
 
 Nginx routes by path prefix to the correct backend; the frontends call these
 relative `/api/...` paths automatically when served over port 80.

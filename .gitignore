@@ -2,3 +2,7 @@ terraform.tfvars
 *.pem
 *.key
 .env
+
+# Terraform local cache / plan (provider binaries are >100MB — never commit)
+.terraform/
+tfplan
