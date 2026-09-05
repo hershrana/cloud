@@ -102,3 +102,15 @@ variable "nginx_memory_in_gbs" {
   type        = number
   default     = 6
 }
+
+variable "app_image_id" {
+  description = "Pin the Spring Boot instance image OCID. When null, the latest Oracle Linux 9 image for the shape is used (drifts over time)."
+  type        = string
+  default     = null
+}
+
+variable "nginx_image_id" {
+  description = "Pin the Nginx instance image OCID. When null, the latest Oracle Linux 9 image for the shape is used (drifts over time)."
+  type        = string
+  default     = null
+}

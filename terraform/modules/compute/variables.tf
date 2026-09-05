@@ -38,6 +38,12 @@ variable "instance_shape" {
   }
 }
 
+variable "image_id" {
+  description = "Explicit image OCID to pin. When null, the latest Oracle Linux 9 image for the shape is selected (which drifts as OCI publishes new images)."
+  type        = string
+  default     = null
+}
+
 variable "ocpus" {
   description = "Number of OCPUs (Always Free A1 budget: 4 OCPUs total across all A1 instances)."
   type        = number

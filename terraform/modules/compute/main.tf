@@ -24,7 +24,7 @@ resource "oci_core_instance" "app" {
 
   source_details {
     source_type             = "image"
-    source_id               = data.oci_core_images.oracle_linux.images[0].id
+    source_id               = var.image_id != null ? var.image_id : data.oci_core_images.oracle_linux.images[0].id
     boot_volume_size_in_gbs = var.boot_volume_size_in_gbs
   }
 

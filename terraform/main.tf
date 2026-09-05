@@ -57,6 +57,7 @@ module "compute" {
   instance_shape      = var.app_instance_shape
   ocpus               = var.app_ocpus
   memory_in_gbs       = var.app_memory_in_gbs
+  image_id            = var.app_image_id
 }
 
 module "mysql" {
@@ -78,6 +79,7 @@ module "nginx" {
   backend_ip          = module.compute.private_ip
   ocpus               = var.nginx_ocpus
   memory_in_gbs       = var.nginx_memory_in_gbs
+  image_id            = var.nginx_image_id
 }
 
 module "monitoring" {
