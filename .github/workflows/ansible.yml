@@ -1,6 +1,7 @@
 name: Ansible Deploy
 
 on:
+  # Manual only: site.yml also installs Java 21 and deploys rp-app.jar to the app box.
   workflow_dispatch:
     inputs:
       target:
@@ -12,10 +13,6 @@ on:
           - site
           - nginx
           - spring_boot
-  push:
-    branches: [master]
-    paths:
-      - "ansible/**"
 
 jobs:
   deploy:
