@@ -6,13 +6,48 @@
   vars:
     backend_ip: "{{ lookup('env', 'APP_PRIVATE_IP') }}"
     backend_port: 8080
-    nginx_ssl_enabled: false
+    nginx_ssl_enabled: true
+    nginx_public_ip: "{{ lookup('env', 'NGINX_PUBLIC_IP') }}"
+    ssl_cert_dir: /etc/nginx/ssl
 
   tasks:
     - name: Ensure Nginx is installed
       ansible.builtin.dnf:
         name: nginx
         state: present
+
+    - name: Ensure SSL cert directory exists
+      ansible.builtin.file:
+        path: "{{ ssl_cert_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      when: nginx_ssl_enabled
+
+    - name: Check for existing self-signed certificate
+      ansible.builtin.stat:
+        path: "{{ ssl_cert_dir }}/selfsigned.crt"
+      register: existing_cert
+      when: nginx_ssl_enabled
+
+    - name: Generate self-signed certificate for the public IP
+      ansible.builtin.command:
+        cmd: >
+          openssl req -x509 -nodes -newkey rsa:2048 -days 3650
+          -keyout {{ ssl_cert_dir }}/selfsigned.key
+          -out {{ ssl_cert_dir }}/selfsigned.crt
+          -subj "/CN={{ nginx_public_ip }}"
+          -addext "subjectAltName=IP:{{ nginx_public_ip }}"
+      when: nginx_ssl_enabled and not existing_cert.stat.exists
+
+    - name: Secure the private key
+      ansible.builtin.file:
+        path: "{{ ssl_cert_dir }}/selfsigned.key"
+        owner: root
+        group: root
+        mode: "0600"
+      when: nginx_ssl_enabled
 
     - name: Deploy Nginx virtual-host configuration
       ansible.builtin.template:

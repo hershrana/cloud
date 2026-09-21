@@ -13,7 +13,7 @@ on:
           - nginx
           - spring_boot
   push:
-    branches: [main]
+    branches: [master]
     paths:
       - "ansible/**"
 
