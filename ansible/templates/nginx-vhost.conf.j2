@@ -22,5 +22,8 @@ server {
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_ciphers         HIGH:!aNULL:!MD5;
 
-    include /etc/nginx/rp-app-locations.inc;
+    # Optional route files (glob = no error if absent): jira/todo from bootstrap, kids/solar from revakunj
+    include /etc/nginx/rp-app-locations*.inc;
+    include /etc/nginx/rp-revakunj-locations*.inc;
+
 }
