@@ -1,0 +1,172 @@
+# Copy into the revakunj repo as .github/workflows/deploy.yml
+#
+# Repo secrets (Settings -> Secrets and variables -> Actions -> New repository secret):
+#   SSH_PRIVATE_KEY   dedicated CI deploy key (~/.ssh/revakunj_deploy), not a personal key
+#   SSH_KNOWN_HOSTS   pinned host keys of both boxes (~/.ssh/revakunj_known_hosts)
+#   APP_HOST          public IP of the app box   (runs kids-money-game :5900)
+#   NGINX_HOST        public IP of the nginx box (serves SPAs, runs solar-ev-tracker :5901)
+#   DB_USERNAME       MySQL user
+#   DB_PASSWORD       MySQL password
+#   JWT_SECRET        base64 HS512 key (openssl rand -base64 64)
+# Secrets are passed to steps only via env and written to /opt/revakunj/<app>/env
+# (mode 600) on each deploy; nothing secret lives in the repo or the image.
+name: Deploy to OCI
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency: deploy-oci
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17, cache: maven }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+
+      - name: Build backends
+        run: mvn -B -q -Dmaven.test.skip=true -f backend/pom.xml clean package
+
+      # Both frontends depend on file:../../dist/access/kids-finance-access-1.0.0.tgz
+      - name: Build and pack access library
+        working-directory: frontend/access
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+          node post-build.js
+          cd ../../dist/access
+          npm pack --pack-destination .
+
+      - name: Build kids frontend
+        working-directory: frontend/kids-money-frontend
+        run: |
+          sed -i "s#apiUrl: .*#apiUrl: '/kids/api',#" src/environments/environment.ts
+          # The lockfile pins a hash of a locally built access tarball; CI rebuilds it, so drop that hash.
+          node -e "const f='package-lock.json',l=require('./'+f);for(const k in l.packages||{})if(k.endsWith('@kids-finance/access'))delete l.packages[k].integrity;require('fs').writeFileSync(f,JSON.stringify(l,null,2))"
+          npm ci --no-audit --no-fund
+          npx ng build --base-href /kids/
+
+      - name: Build solar frontend
+        working-directory: frontend/solarelectricity-frontend
+        run: |
+          sed -i "s#apiUrl: .*#apiUrl: '/solar/api',#" src/environments/environment.ts
+          # The lockfile pins a hash of a locally built access tarball; CI rebuilds it, so drop that hash.
+          node -e "const f='package-lock.json',l=require('./'+f);for(const k in l.packages||{})if(k.endsWith('@kids-finance/access'))delete l.packages[k].integrity;require('fs').writeFileSync(f,JSON.stringify(l,null,2))"
+          npm ci --no-audit --no-fund
+          npx ng build --base-href /solar/
+
+      - name: Collect artifacts
+        run: |
+          mkdir out
+          cp backend/kids-money-game/target/kids-money-game-*.jar out/kids.jar
+          cp backend/solar-ev-tracker/target/solar-ev-tracker-*.jar out/solar.jar
+          for f in kids-money-frontend:kids solarelectricity-frontend:solar; do
+            src=frontend/${f%%:*}/dist/${f%%:*}; dst=out/${f##*:}
+            if [ -d "$src/browser" ]; then cp -r "$src/browser" "$dst"; else cp -r "$src" "$dst"; fi
+          done
+          find out -maxdepth 2
+      - uses: actions/upload-artifact@v4
+        with: { name: release, path: out, retention-days: 7 }
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      APP_HOST: ${{ secrets.APP_HOST }}
+      NGINX_HOST: ${{ secrets.NGINX_HOST }}
+      # Public HTTPS domain users open. Passkeys (WebAuthn) are bound to it, so never
+      # change it once passkeys are registered - they would all stop working.
+      PUBLIC_DOMAIN: hbr.publicvm.com
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: release, path: out }
+
+      - name: SSH setup
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          # tr strips CRs that sneak in when secrets are pasted from Windows
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_deploy
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_deploy ~/.ssh/known_hosts
+          printf 'Host *\n  User opc\n  IdentityFile ~/.ssh/id_deploy\n  StrictHostKeyChecking yes\n  ConnectTimeout 20\n' > ~/.ssh/config
+
+      - name: Deploy backends
+        env:
+          DB_URL: "jdbc:mysql://revakunj.private.revakunj.oraclevcn.com:3306/kids_money_game?createDatabaseIfNotExist=true&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
+          DB_USERNAME: ${{ secrets.DB_USERNAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          # Both apps share one schema + flyway history: ignore each other's migrations
+          # (missing/future) and allow applying our own out of order. Also turn the
+          # repo's DEBUG/TRACE logging (incl. SQL bind values) down for prod.
+          PROD_JSON: >-
+            {"spring":{"jpa":{"show-sql":false},"flyway":{"out-of-order":true,"ignore-migration-patterns":"*:missing,*:future"}},
+            "logging":{"level":{"root":"INFO","com.revakunj":"INFO","com.revakunj.hbr.kidsmoney":"INFO",
+            "com.revakunj.hbr.solarev.tracker":"INFO","org.springframework.web":"INFO","org.springframework.security":"INFO",
+            "org.hibernate.SQL":"WARN","org.hibernate.type.descriptor.sql.BasicBinder":"WARN"}}}
+        run: |
+          deploy() { # name port host [extra env lines...]
+            local n=$1 port=$2 host=$3; shift 3
+            printf '%s\n' \
+              "SERVER_PORT=$port" \
+              "SPRING_DATASOURCE_URL=$DB_URL" \
+              "SPRING_DATASOURCE_USERNAME=$DB_USERNAME" \
+              "SPRING_DATASOURCE_PASSWORD=$DB_PASSWORD" \
+              "APP_JWT_SECRET=$JWT_SECRET" \
+              "SPRING_APPLICATION_JSON='$PROD_JSON'" \
+              "$@" \
+              | ssh "$host" "umask 077; cat > /opt/revakunj/$n/env"
+            scp -q out/$n.jar "$host:/opt/revakunj/$n/app.jar.new"
+            ssh "$host" "chmod 640 /opt/revakunj/$n/app.jar.new && mv /opt/revakunj/$n/app.jar.new /opt/revakunj/$n/app.jar && sudo systemctl restart revakunj-$n"
+          }
+          # Without these the kids backend defaults to rp-id "localhost" and browsers
+          # reject every passkey on the real domain with a SecurityError.
+          deploy kids 5900 "$APP_HOST" \
+            "APP_WEBAUTHN_RP_ID=$PUBLIC_DOMAIN" \
+            "APP_WEBAUTHN_ORIGINS=https://$PUBLIC_DOMAIN"
+          deploy solar 5901 "$NGINX_HOST"
+
+      - name: Deploy frontends
+        run: |
+          for n in kids solar; do
+            tar -C out/$n -cz . | ssh "$NGINX_HOST" "find /var/www/$n -mindepth 1 -delete && tar -xz -C /var/www/$n"
+          done
+
+      - name: Wait for backends
+        run: |
+          wait_up() { # name port host
+            for i in $(seq 1 36); do
+              code=$(ssh "$3" "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$2/api/auth/login" || true)
+              if [ "$code" != "000" ]; then echo "$1 up (HTTP $code)"; return 0; fi
+              sleep 10
+            done
+            echo "::error::$1 did not start"; ssh "$3" "sudo -n journalctl -u revakunj-$1 -n 80 --no-pager" || true
+            return 1
+          }
+          wait_up kids 5900 "$APP_HOST" & a=$!
+          wait_up solar 5901 "$NGINX_HOST" & b=$!
+          wait $a && wait $b
+
+      - name: Smoke test via nginx
+        run: |
+          for p in kids/ solar/; do
+            curl -skf -o /dev/null "https://$NGINX_HOST/$p" && echo "ok /$p"
+          done
+          # Passkeys only work if the backend advertises the public domain as rp-id.
+          opts=$(curl -sf -X POST -H 'Content-Type: application/json' -d '{}' \
+            "https://$PUBLIC_DOMAIN/kids/api/auth/passkey/login/options")
+          echo "$opts" | grep -q "\"rpId\":\"$PUBLIC_DOMAIN\"" \
+            || { echo "::error::kids passkey rpId is not $PUBLIC_DOMAIN: $opts"; exit 1; }
+          echo "ok passkey rpId $PUBLIC_DOMAIN"
