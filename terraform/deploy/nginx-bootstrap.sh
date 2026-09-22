@@ -10,12 +10,16 @@ TODO_PORT="5855"
 # backend runs on the dedicated app box. Override via env when topology changes.
 JIRA_HOST="${JIRA_HOST:-${APP_PRIVATE_IP}}"
 TODO_HOST="${TODO_HOST:-10.0.1.217}"
+# Optional public domain (e.g. a free DNSExit name like myapp.publicvm.com) whose A record
+# points at this box: when set, a trusted Let's Encrypt cert replaces the self-signed one.
+DOMAIN="${DOMAIN:-}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "== Ensuring nginx installed =="
 command -v nginx >/dev/null 2>&1 || sudo dnf install -y nginx
 
 echo "== Creating web roots =="
-sudo mkdir -p /var/www/jira /var/www/todo
+sudo mkdir -p /var/www/jira /var/www/todo /var/www/acme
 # Placeholder pages only if nothing deployed yet (never clobber a real deploy)
 [ -e /var/www/jira/index.html ] || echo '<h1>Jira frontend not deployed yet</h1>' | sudo tee /var/www/jira/index.html >/dev/null
 [ -e /var/www/todo/index.html ] || echo '<h1>Todo frontend not deployed yet</h1>' | sudo tee /var/www/todo/index.html >/dev/null
@@ -124,6 +128,12 @@ sudo tee /etc/nginx/rp-app-locations.inc >/dev/null <<EOF
     }
 EOF
 
+# Keep an already-issued Let's Encrypt cert across re-runs; self-signed until one exists
+CERT=/etc/nginx/ssl/selfsigned.crt KEY=/etc/nginx/ssl/selfsigned.key
+if [ -n "$DOMAIN" ] && sudo test -f "/etc/nginx/ssl/$DOMAIN.crt"; then
+  CERT="/etc/nginx/ssl/$DOMAIN.crt" KEY="/etc/nginx/ssl/$DOMAIN.key"
+fi
+
 echo "== Writing nginx site config (HTTP->HTTPS redirect + TLS) =="
 sudo tee /etc/nginx/conf.d/rp-app.conf >/dev/null <<EOF
 server {
@@ -135,6 +145,11 @@ server {
         add_header Content-Type text/plain;
         return 200 'ok';
     }
+    # Let's Encrypt HTTP-01 challenges (enable-letsencrypt.sh); must stay plain HTTP
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/acme;
+        default_type text/plain;
+    }
     location / {
         return 301 https://\$host\$request_uri;
     }
@@ -144,8 +159,8 @@ server {
     listen 443 ssl default_server;
     server_name _;
 
-    ssl_certificate     /etc/nginx/ssl/selfsigned.crt;
-    ssl_certificate_key /etc/nginx/ssl/selfsigned.key;
+    ssl_certificate     ${CERT};
+    ssl_certificate_key ${KEY};
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_ciphers         HIGH:!aNULL:!MD5;
 
@@ -185,4 +200,11 @@ sudo systemctl restart nginx
 echo "== Opening firewall for HTTP/HTTPS =="
 sudo firewall-cmd --permanent --add-service=http --add-service=https 2>/dev/null || true
 sudo firewall-cmd --reload 2>/dev/null || true
+
+if [ -n "$DOMAIN" ]; then
+  echo "== Issuing Let's Encrypt cert for $DOMAIN =="
+  sudo DOMAIN="$DOMAIN" bash "$SCRIPT_DIR/enable-letsencrypt.sh"
+else
+  echo "NOTE: self-signed cert only (browsers warn). Set DOMAIN=<name> for a trusted cert."
+fi
 echo "== Done =="

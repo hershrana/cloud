@@ -9,6 +9,9 @@
     nginx_ssl_enabled: true
     nginx_public_ip: "{{ lookup('env', 'NGINX_PUBLIC_IP') }}"
     ssl_cert_dir: /etc/nginx/ssl
+    # Domain with a Let's Encrypt cert already issued by terraform/deploy/enable-letsencrypt.sh
+    # (e.g. hbr.publicvm.com). Empty = self-signed.
+    ssl_domain: "{{ lookup('env', 'DOMAIN') }}"
 
   tasks:
     - name: Ensure Nginx is installed

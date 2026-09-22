@@ -8,6 +8,11 @@ server {
         add_header Content-Type text/plain;
         return 200 'ok';
     }
+    # Let's Encrypt HTTP-01 challenges (terraform/deploy/enable-letsencrypt.sh); keep plain HTTP
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/acme;
+        default_type text/plain;
+    }
     location / {
         return 301 https://$host$request_uri;
     }
@@ -17,8 +22,13 @@ server {
     listen 443 ssl default_server;
     server_name _;
 
+{% if ssl_domain %}
+    ssl_certificate     {{ ssl_cert_dir }}/{{ ssl_domain }}.crt;
+    ssl_certificate_key {{ ssl_cert_dir }}/{{ ssl_domain }}.key;
+{% else %}
     ssl_certificate     {{ ssl_cert_dir }}/selfsigned.crt;
     ssl_certificate_key {{ ssl_cert_dir }}/selfsigned.key;
+{% endif %}
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_ciphers         HIGH:!aNULL:!MD5;
 

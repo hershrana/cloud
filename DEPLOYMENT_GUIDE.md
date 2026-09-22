@@ -7,8 +7,9 @@ Whenever you push to `main`/`master` in either repo, GitHub Actions builds the a
 
 ## 1. What is running where
 
-Everything runs on **one healthy Always-Free VM** (the other 498 MB micro was too
-small to run two JVMs, so it is currently unused/spare):
+Everything runs on **one Always-Free VM**. The other micro reported only ~498 MB,
+most likely because kdump reserves 448 MB of its 1 GB; after the memory fix in
+`AI_DEPLOYMENT_RUNBOOK.md` §3 it has ~945 MB and can host one backend:
 
 | Component            | Location                                   |
 |----------------------|--------------------------------------------|
@@ -24,9 +25,16 @@ small to run two JVMs, so it is currently unused/spare):
 - Jira API: https://137.23.42.212/api/jira/... (also `/api/auth/...`)
 - Todo API: https://137.23.42.212/api/tasks/..., `/api/notes/...`, `/api/eod/...`
 
-> HTTPS uses a **self-signed certificate**, so browsers show a one-time "Not
-> secure" warning — click Advanced → Proceed. Plain HTTP auto-redirects to HTTPS.
-> For a trusted cert, add a domain + Let's Encrypt later.
+> Over the bare IP, HTTPS uses a **self-signed certificate**, so browsers show a
+> "Not secure" warning. Plain HTTP auto-redirects to HTTPS.
+>
+> **Recommended: use a (free) domain for a trusted certificate.** Get a free name
+> from [DNSExit](https://dnsexit.com) (e.g. `<name>.publicvm.com`), point its A
+> record at the nginx box's public IP, then on that box run
+> `sudo DOMAIN=<name>.publicvm.com bash terraform/deploy/enable-letsencrypt.sh`.
+> That issues a Let's Encrypt cert and renews it automatically. The revakunj apps
+> already use this: https://hbr.publicvm.com/kids/ and https://hbr.publicvm.com/solar/.
+> Details: `AI_DEPLOYMENT_RUNBOOK.md` §0.3 and §3 (nginx).
 
 Nginx routes by path prefix to the correct backend; the frontends call these
 relative `/api/...` paths automatically when served over port 80.
@@ -144,6 +152,25 @@ Re-run the server bootstrap scripts anytime (idempotent):
 - The IPs (`137.23.42.212`) are ephemeral public IPs; if the instance is
   recreated they change and the GitHub secrets must be updated. (Reserve a
   static public IP in OCI to avoid this.)
-- Only HTTP (port 80) is configured. Add TLS (Let's Encrypt / OCI cert) for HTTPS.
-- The second micro instance (`137.23.41.69`, ~498 MB) is unused — you can
-  terminate it in OCI to reduce clutter, or keep it as a spare.
+- A trusted cert needs a domain name (see §1). If the box's IP changes, update
+  the domain's A record too, or renewal fails and the name stops resolving.
+- The second micro instance (`137.23.41.69`) is unused. Its ~498 MB is most likely
+  the kdump reservation, so apply `AI_DEPLOYMENT_RUNBOOK.md` §3 before putting a
+  backend on it (or terminate it to reduce clutter).
+
+---
+
+## 8. If you see "504 Gateway Time-out"
+
+nginx is running, but the backend behind the URL didn't answer. Most common causes:
+
+1. **The backend box ran out of memory.** SSH to it hangs at "banner exchange".
+   Reboot it from the OCI console, then apply the memory fixes in
+   `AI_DEPLOYMENT_RUNBOOK.md` §3 so it doesn't happen again.
+2. **A stale nginx route** proxies to a port nothing listens on (for example
+   `:8080` after running the Ansible playbook). The `upstream:` field in
+   `/var/log/nginx/error.log` shows where the request went.
+3. **A wrong URL**, such as `/welcome` instead of `/<app>/welcome`. Check
+   `/var/log/nginx/access.log` for the path the browser really requested.
+
+Full triage steps: `AI_DEPLOYMENT_RUNBOOK.md` §7.1.

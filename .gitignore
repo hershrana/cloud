@@ -6,3 +6,7 @@ terraform.tfvars
 # Terraform local cache / plan (provider binaries are >100MB — never commit)
 .terraform/
 tfplan
+
+.claude/settings.local.json
+*.tfplan
+terraform/terraform.tfstate.d/

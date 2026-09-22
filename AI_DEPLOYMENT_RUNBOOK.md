@@ -49,6 +49,25 @@ For **each** app collect:
   include any uncommitted local edits — tell the user, and let them decide what
   to commit.
 
+### 0.3 Domain name for a trusted SSL certificate (ask at startup — strongly recommended)
+Browsers only trust HTTPS for a **domain name**, never for a bare IP. Without a
+domain the site runs on a self-signed cert and every visitor sees **"Not secure"**.
+Ask the user:
+
+| Input | Notes |
+|-------|-------|
+| `domain` | e.g. `hbr.publicvm.com`. If they have none, **recommend a free one** — [DNSExit](https://dnsexit.com) gives free subdomains such as `<name>.publicvm.com` (also fine: DuckDNS, No-IP, FreeDNS). A paid domain works the same. |
+
+What the user does (one time, in the DNS provider's console):
+1. Create the host name and an **A record → the nginx box's public IP** (from
+   `terraform output`). Reserve a static public IP in OCI first, or remember to
+   update the A record whenever the box is recreated (DNSExit also has a dynamic-DNS
+   update URL for that).
+2. Wait until `nslookup <domain> 8.8.8.8` returns that IP. Only then issue the cert (§4 step 7).
+
+No email or account with Let's Encrypt is needed. If the user declines, deploy with
+the self-signed cert and tell them browsers will warn until a domain is added.
+
 ---
 
 ## 1. Target architecture (what we build)
@@ -62,9 +81,11 @@ Internet ──80──▶ [ Public VM  (~1 GB E2.1.Micro, public IP) ]
                      └──3306──▶ MySQL HeatWave (private 10.0.2.x, no public IP)
 ```
 
-- **Single-box runtime.** Always Free gives 2× AMD micro (~1 GB) or ARM A1
-  (capacity-permitting). Run **nginx + all backends on ONE healthy box**; talk to
-  MySQL over the private VCN. (See §3 for why one box.)
+- **One JVM per micro box.** Always Free gives 2× AMD micro (1 GB each) or ARM A1
+  (capacity-permitting). A 1 GB box holds nginx + **one** Spring Boot backend; put
+  a second backend on the other micro and proxy to its private IP. Both micros are
+  only usable after the memory fixes in §3 (without them one may show ~498 MB).
+  Talk to MySQL over the private VCN.
 - **MySQL HeatWave** (`MySQL.Free`, 50 GB) is the only free managed DB — apps must
   use MySQL, not Postgres.
 
@@ -80,9 +101,12 @@ Internet ──80──▶ [ Public VM  (~1 GB E2.1.Micro, public IP) ]
 4. **MySQL DB System quirks:** no `backup_policy` block, don't pin `mysql_version`
    (leave null), `is_highly_available = false`, `shape_name = "MySQL.Free"`.
    Creation takes **~21 minutes** — expect the long wait.
-5. **Micro instances have ~1 GB and sometimes ~0.5 GB.** A ~0.5 GB box **cannot**
-   run two JVMs and even OOM-thrashes during `dnf install java` (SSH banner
-   timeouts). Pick the box that reports the most RAM (`free -m`) for runtime.
+5. **Micro instances have 1 GB, but Oracle Linux can hide half of it.** The stock
+   kernel cmdline has `crashkernel=1G-64G:448M,64G-:512M`; when it takes effect,
+   kdump reserves 448 MB and `free -m` shows only **~498 MB**. Such a box
+   OOM-thrashes as soon as `dnf` runs next to a JVM: SSH hangs at "banner
+   exchange" and every API behind it returns **504**. It is not a smaller box;
+   remove the reservation (§3) and it shows ~945 MB like the other one.
 6. **Public IPs are ephemeral** — they change if an instance is recreated. Update
    GitHub secrets after any recreate, or reserve a static public IP.
 
@@ -94,6 +118,22 @@ Internet ──80──▶ [ Public VM  (~1 GB E2.1.Micro, public IP) ]
 - In cloud-init: **create a 2 GB swapfile FIRST**, then install packages. Do **not**
   run `dnf update -y` on a 1 GB box (it OOM-wedges the instance). Only
   `dnf install -y <needed>`.
+- **Reclaim the kdump memory and stop background `dnf`** on every micro, in
+  cloud-init (as root) or once by hand (with `sudo`), then **reboot once**: the
+  reservation is only released at boot.
+  ```bash
+  systemctl disable --now dnf-makecache.timer kdump
+  ck=$(grep -o 'crashkernel=[^ ]*' /proc/cmdline) && grubby --update-kernel=ALL --remove-args="$ck"
+  sed -i -E 's/ ?crashkernel=[^ "]*//' /etc/default/grub   # keep it off for future kernels
+  sed -i -E 's/^auto_reset_crashkernel .*/auto_reset_crashkernel no/' /etc/kdump.conf
+  ```
+  `dnf-makecache.timer` refreshes repo metadata ~10 min after boot and then every
+  hour or two, and each run needs ~350 MB. On a box left with ~498 MB next to a
+  JVM, that run froze the whole instance until a console reboot. After the
+  reboot, check `free -m` (≈ 945 total) and `cat /sys/kernel/kexec_crash_size` (`0`).
+- **Never run full-repo `dnf` next to a running JVM**, and that includes Ansible's
+  `dnf:` module. Install packages before starting backends, restricting repos:
+  `dnf install -y --disablerepo='*' --enablerepo=ol9_baseos_latest,ol9_appstream <pkg>`.
 - OL9 **firewalld blocks port 80** → `firewall-cmd --add-service=http --add-service=https`.
   Open backend ports only inside the VCN:
   `--add-rich-rule='rule family=ipv4 source address=10.0.0.0/16 port port=5855-5857 protocol=tcp accept'`.
@@ -108,6 +148,33 @@ Internet ──80──▶ [ Public VM  (~1 GB E2.1.Micro, public IP) ]
   A trailing-slash location (`location /api/x/`) makes nginx **301-redirect**
   bare-path calls → then Spring Boot 4 (trailing-slash matching disabled) returns
   **404**. This bit us; don't repeat it.
+- **One owner per nginx file.** `ansible/playbooks/nginx.yml` and
+  `terraform/deploy/nginx-bootstrap.sh` both write `/etc/nginx/conf.d/rp-app.conf`.
+  Running the playbook on a box set up by a bootstrap script replaced the app
+  routes with `location / → <app-ip>:8080` (nothing listens there), so every path
+  outside the SPA prefixes **504'd after 10 s**. Configure each box with one tool
+  only, and never run `site.yml` on it (§5).
+- **TLS: use a domain + Let's Encrypt via `acme.sh`, not certbot.** certbot needs
+  EPEL + a `dnf` install (the memory spike §3 warns about); `acme.sh` is a single
+  shell script. `terraform/deploy/enable-letsencrypt.sh` installs it, issues an
+  ECDSA cert with the HTTP-01 webroot `/var/www/acme`, writes
+  `/etc/nginx/ssl/<domain>.{crt,key}`, and adds a root cron job that renews
+  (~every 60 days) and reloads nginx.
+  - The port-80 server **must keep** `location ^~ /.well-known/acme-challenge/ { root /var/www/acme; }`
+    ahead of the HTTPS redirect. A server-level `return 301 https://…` (outside any
+    `location`) runs before location matching and breaks issuing and renewal.
+  - After switching from self-signed, a browser that earlier clicked "Proceed" can
+    keep showing "Not secure" on open tabs. Test in a private window, or restart the browser.
+  - `https://<ip>` still warns (the cert names the domain); always share the domain URL.
+- **No catch-all `proxy_pass` to a backend that isn't there.** End every server
+  block with `location / { return 404; }` so unknown paths fail instantly instead
+  of timing out.
+- **Redirect the bare paths people type or bookmark**, so they never fall through:
+  ```nginx
+  location = /        { return 302 /<default-app>/; }
+  location = /<app>   { return 301 /<app>/; }                     # one per app
+  location = /welcome { return 302 /<app>/welcome$is_args$args; }  # root-level SPA routes
+  ```
 - `opc` has passwordless sudo, so deploy steps can `sudo systemctl restart …`.
 
 **Java / Maven (PowerShell)**
@@ -125,6 +192,11 @@ Internet ──80──▶ [ Public VM  (~1 GB E2.1.Micro, public IP) ]
 - **Angular 18** → `ng build --configuration production --base-href /<app>/`.
   Output: `dist/<name>/browser/`. Make deploy handle both (`browser/` fallback).
 - Frontends must call **relative** `/api/...` in production (see §6.4).
+- **Never navigate with a root-absolute URL** such as `window.location.href = '/login'`.
+  It ignores `--base-href` and lands outside `/<app>/` (404, or 504 behind a
+  catch-all). Use the Router (`router.navigate(['/login'])` respects the base
+  href) or `new URL('login', document.baseURI).href`. The solar SSO page shipped
+  with this bug.
 
 ---
 
@@ -139,14 +211,18 @@ Internet ──80──▶ [ Public VM  (~1 GB E2.1.Micro, public IP) ]
 3. `terraform init && terraform validate && terraform apply`. MySQL ~21 min.
    If A1 → `Out of host capacity`, switch shapes to E2.1.Micro and re-apply.
 4. `terraform output` → capture **public IP**, **private IP**, **mysql endpoint**.
-5. Pick the healthier box (`ssh … "free -m"`), install Java there:
-   `sudo dnf install -y java-21-openjdk-headless`.
+5. On **both** boxes apply the §3 memory fixes and reboot; `free -m` must show
+   ~945 MB total on each. Then install Java **before** starting any backend:
+   `sudo dnf install -y --disablerepo='*' --enablerepo=ol9_baseos_latest,ol9_appstream java-21-openjdk-headless`.
 6. Run **`terraform/deploy/app-bootstrap.sh`** on that box (env:
    `MYSQL_PWD=… JWT_SECRET=…`): creates `rp-app` user, `/opt/<app>` dirs, env files,
    systemd units, firewall rules, and the MySQL databases.
 7. Run **`terraform/deploy/nginx-bootstrap.sh`** on that box
-   (`APP_PRIVATE_IP=127.0.0.1`): web roots, path-based reverse proxy, firewall,
-   SELinux booleans/labels.
+   (`APP_PRIVATE_IP=127.0.0.1 DOMAIN=<domain from §0.3>`): web roots, path-based
+   reverse proxy, firewall, SELinux booleans/labels, and, when `DOMAIN` is set,
+   a **trusted Let's Encrypt cert** (copy `enable-letsencrypt.sh` next to it; it is
+   called automatically). Without `DOMAIN` you get a self-signed cert only. To add a
+   domain later: `sudo DOMAIN=<domain> bash enable-letsencrypt.sh` on the nginx box.
 8. **Convert each app to MySQL** (§6) and **build** (backend jar + Angular dist).
 9. **Deploy** artifacts (jars → `/opt/<app>/<app>.jar` + restart service; Angular
    `dist` → `/var/www/<app>` + `chcon` + reload nginx).
@@ -174,6 +250,11 @@ Triggers on push to `main` **and** `master`. Steps: build backend
 Angular build command differs by version (§3). Frontend `dist` path: try
 `frontend/dist/<name>/browser` then fall back to `frontend/dist/<name>`.
 Reference implementations already committed: `<app>/.github/workflows/deploy.yml`.
+
+**CI deploys only copy artifacts and restart services**: no `dnf`, no provisioning.
+This repo's `.github/workflows/ansible.yml` runs `site.yml`, which applies the
+nginx template **and** `spring_boot.yml` (Java via full-repo `dnf`, `rp-app.jar`
+on :8080). It is therefore **manual-only**; don't add a push trigger back.
 
 ---
 
@@ -243,17 +324,57 @@ So the app calls `/api/tasks`, `/api/jira/onload`, etc. — which nginx routes.
 
 ---
 
-## 7. Verification checklist (all should be 200 via the public IP)
+## 7. Verification checklist (via the domain, or the public IP if none)
 ```
+openssl s_client -connect <domain>:443 -servername <domain> </dev/null | grep "Verify return code"
+                               → Verify return code: 0 (ok), issuer Let's Encrypt
+curl -I http://<domain>/<app>/ → 301 to https://<domain>/<app>/
+sudo /root/.acme.sh/acme.sh --list   (on the nginx box) → domain listed with a renew date
+sudo crontab -l | grep acme          → renewal cron present
+
 GET /health                    → 200 "ok"
 GET /<app>/                    → 200 (Angular index.html, correct <base href>)
 GET /<app>/main*.js            → 200
 GET /api/<prefix>/<endpoint>   → 200   (e.g. /api/jira/onload, /api/tasks/open)
+GET /                          → 302 to /<default-app>/
+GET /<app>                     → 301 to /<app>/
+GET /no-such-path              → 404 immediately (never a 504)
+```
+On **every** box:
+```
+free -m                                          → Mem total ≈ 945 (≈ 498 = kdump still reserving)
+cat /sys/kernel/kexec_crash_size                 → 0
+systemctl is-enabled dnf-makecache.timer kdump   → disabled, disabled
 ```
 - Backend logs: `journalctl -u <app>-backend` should show the MySQL JDBC/R2DBC URL
   and `Started …Application`.
 - If an API 404s via nginx but 200s directly on `127.0.0.1:<port>`, it's the
   **trailing-slash location** bug (§3) — fix the nginx `location` prefix.
+
+### 7.1 If you get `504 Gateway Time-out`
+nginx is up but a backend didn't answer in time. Diagnose on the nginx box before
+changing anything:
+
+1. `sudo tail -n 20 /var/log/nginx/error.log` and read the `request:` and
+   `upstream:` fields.
+2. Match the message:
+
+   | error.log says | Meaning | Fix |
+   |---|---|---|
+   | `upstream: "http://…:8080/…"`, or any port nothing serves | stale catch-all route | fix the nginx config (§3 nginx) |
+   | `timed out … while connecting to upstream` | backend box not answering at all | box frozen (step 3), or NSG/firewalld blocking the port |
+   | `timed out … while reading response header` | backend accepted but is stuck | box out of memory (step 3), or a request slower than `proxy_read_timeout` |
+   | `connect() failed (111: Connection refused)` | a **502**, not a 504: backend down or still starting | `systemctl status` / `journalctl -u`; Spring Boot needs 60–90 s on a micro |
+
+3. If SSH to the backend box hangs at `Connection timed out during banner exchange`,
+   it is out of memory and thrashing. Reboot it from the OCI console, then check
+   `sudo grep -iE 'out of memory|killed process' /var/log/messages | tail`,
+   `free -m` and `/sys/kernel/kexec_crash_size`, and apply the §3 memory fixes.
+4. Check which URL the browser really requests:
+   `sudo tail -n 30 /var/log/nginx/access.log`. A bookmarked root-level route
+   (`/welcome` instead of `/<app>/welcome`) needs a redirect (§3 nginx).
+
+Don't "fix" a 504 by re-running Ansible or `dnf` on a live box: both make it worse.
 
 ---
 
@@ -272,7 +393,9 @@ private FQDN / `10.0.2.x`).
 > These are specifics of the current environment; a fresh run will differ.
 
 - Region `ap-mumbai-1`; root compartment = tenancy OCID.
-- Runtime box (ephemeral public IP) `137.23.42.212`; the other micro (~498 MB) left unused.
+- Runtime box (ephemeral public IP) `137.23.42.212`; the other micro showed ~498 MB
+  and was left unused. That was most likely the kdump reservation (§2 item 5), not
+  a smaller box: reclaim it with the §3 fix.
 - MySQL: `rpapp.private.rpapp.oraclevcn.com` / `10.0.2.16:3306`, DBs `jira`, `todo`.
 - SSH deploy key: `~/.ssh/rp-app-instances`; login user `opc`; service user `rp-app`.
 - **jira**: Spring Boot 4, JPA, port **5857**, controllers under `/api/jira` (+ `/api/auth`),
@@ -282,10 +405,14 @@ private FQDN / `10.0.2.x`).
   Angular **17** (`dist/todo-frontend`), base-href `/todo/`,
   repo `github.com/hershrana/todo.git` (private, branch `master`).
 
+- revakunj prod domain: `hbr.publicvm.com` (free DNSExit name) → nginx box
+  `137.23.57.203`, Let's Encrypt cert via acme.sh since 2026-09-22.
+
 ## Appendix B — Files this runbook relies on (already in this repo)
 - `terraform/` — full IaC (modules with per-module `versions.tf`).
 - `terraform/terraform.tfvars` — inputs (gitignored; fill from §0.1).
 - `terraform/deploy/app-bootstrap.sh` — backend services + MySQL DBs (idempotent).
-- `terraform/deploy/nginx-bootstrap.sh` — reverse proxy + SPAs (idempotent).
+- `terraform/deploy/nginx-bootstrap.sh` — reverse proxy + SPAs (idempotent; `DOMAIN=` for real TLS).
+- `terraform/deploy/enable-letsencrypt.sh` — Let's Encrypt cert + auto-renewal via acme.sh (idempotent).
 - `<app>/.github/workflows/deploy.yml` — CI/CD per app.
 - `DEPLOYMENT_GUIDE.md` — human-facing summary of the live setup.
