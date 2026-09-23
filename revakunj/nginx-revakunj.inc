@@ -30,6 +30,27 @@
         proxy_set_header Origin "";
         proxy_read_timeout 30s;
     }
+    # Passkey (WebAuthn) endpoints of the kids-money backend, reached without the /kids
+    # prefix: the Solar app signs in against the main backend at /api. Only these two
+    # paths, so the rest of /api stays free (see jira note above).
+    location /api/auth/passkey/ {
+        proxy_pass http://KIDS_HOST:5900/api/auth/passkey/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Origin "";
+        proxy_read_timeout 30s;
+    }
+    location /api/account/passkeys {
+        proxy_pass http://KIDS_HOST:5900;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Origin "";
+        proxy_read_timeout 30s;
+    }
     location /learning/ {
         alias /var/www/learning/;
         try_files $uri $uri/ /learning/index.html;
