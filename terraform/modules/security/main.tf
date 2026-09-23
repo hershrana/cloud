@@ -59,6 +59,22 @@ resource "oci_core_network_security_group_security_rule" "compute_revakunj_ingre
   }
 }
 
+# Allow revakunj learning backend (5902) from Nginx NSG
+resource "oci_core_network_security_group_security_rule" "compute_revakunj_learning_ingress" {
+  network_security_group_id = oci_core_network_security_group.compute.id
+  direction                 = "INGRESS"
+  protocol                  = "6"
+  source                    = oci_core_network_security_group.nginx.id
+  source_type               = "NETWORK_SECURITY_GROUP"
+
+  tcp_options {
+    destination_port_range {
+      min = 5902
+      max = 5902
+    }
+  }
+}
+
 # Allow all egress from compute
 resource "oci_core_network_security_group_security_rule" "compute_egress" {
   network_security_group_id = oci_core_network_security_group.compute.id
