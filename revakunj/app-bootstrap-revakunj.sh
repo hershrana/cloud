@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Run ON EACH BOX that hosts a revakunj backend (idempotent, holds no secrets).
-# Usage: APPS="kids" bash app-bootstrap-revakunj.sh    (or APPS="solar")
+# Usage: APPS="kids learning" bash app-bootstrap-revakunj.sh    (or APPS="solar")
+# List EVERY app on the box: /etc/sudoers.d/revakunj is rewritten from APPS.
 #
 # DB credentials and the JWT secret are NOT set here: the GitHub Actions deploy
 # job writes /opt/revakunj/<app>/env from repo secrets on every deploy.
 set -euo pipefail
 
-declare -A PORT=([kids]=5900 [solar]=5901) JAR=([kids]=kids-money-game [solar]=solar-ev-tracker)
-APPS="${APPS:?set APPS to kids and/or solar}"
+declare -A PORT=([kids]=5900 [solar]=5901 [learning]=5902) \
+           JAR=([kids]=kids-money-game [solar]=solar-ev-tracker [learning]=learning)
+APPS="${APPS:?set APPS to the apps on this box, e.g. \"kids learning\" or \"solar learning\"}"
 
 # Spring Boot 3.2 / pom java.version=17
 # Full-repo dnf gets OOM-killed on the 0.5 GB micro box; skip if present and

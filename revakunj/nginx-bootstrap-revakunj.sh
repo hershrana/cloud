@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 # Run ON THE NGINX BOX once (idempotent), with nginx-revakunj.inc copied to /tmp:
-#   KIDS_HOST=10.0.1.85 SOLAR_HOST=127.0.0.1 bash nginx-bootstrap-revakunj.sh
+#   KIDS_HOST=10.0.1.85 SOLAR_HOST=127.0.0.1 LEARNING_HOST=10.0.1.85 bash nginx-bootstrap-revakunj.sh
 set -euo pipefail
-: "${KIDS_HOST:?}" "${SOLAR_HOST:?}"
+: "${KIDS_HOST:?}" "${SOLAR_HOST:?}" "${LEARNING_HOST:?}"
 CONF=/etc/nginx/conf.d/rp-app.conf
 INC=/etc/nginx/rp-revakunj-locations.inc
 
-sudo mkdir -p /var/www/kids /var/www/solar
-sudo chown opc:opc /var/www/kids /var/www/solar
+sudo mkdir -p /var/www/kids /var/www/solar /var/www/learning
+sudo chown opc:opc /var/www/kids /var/www/solar /var/www/learning
 [ -e /var/www/kids/index.html ]  || echo '<h1>kids not deployed yet</h1>'  > /var/www/kids/index.html
 [ -e /var/www/solar/index.html ] || echo '<h1>solar not deployed yet</h1>' > /var/www/solar/index.html
-sudo chcon -R -t httpd_sys_content_t /var/www/kids /var/www/solar
+[ -e /var/www/learning/index.html ] || echo '<h1>learning not deployed yet</h1>' > /var/www/learning/index.html
+sudo chcon -R -t httpd_sys_content_t /var/www/kids /var/www/solar /var/www/learning
 sudo setsebool -P httpd_can_network_connect 1
 
-sed -e "s/KIDS_HOST/$KIDS_HOST/g" -e "s/SOLAR_HOST/$SOLAR_HOST/g" "${INC_SRC:-/tmp/nginx-revakunj.inc}" | sudo tee $INC >/dev/null
+sed -e "s/KIDS_HOST/$KIDS_HOST/g" -e "s/SOLAR_HOST/$SOLAR_HOST/g" -e "s/LEARNING_HOST/$LEARNING_HOST/g" \
+  "${INC_SRC:-/tmp/nginx-revakunj.inc}" | sudo tee $INC >/dev/null
 
 # Hook the include into the TLS server block (right after ssl_protocols).
 if ! sudo grep -q rp-revakunj-locations $CONF; then
@@ -22,4 +24,4 @@ if ! sudo grep -q rp-revakunj-locations $CONF; then
 fi
 sudo nginx -t
 sudo systemctl reload nginx
-echo "nginx: /kids -> $KIDS_HOST:5900, /solar -> $SOLAR_HOST:5901"
+echo "nginx: /kids -> $KIDS_HOST:5900, /solar -> $SOLAR_HOST:5901, /learning -> $LEARNING_HOST:5902"

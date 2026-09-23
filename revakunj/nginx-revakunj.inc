@@ -30,3 +30,19 @@
         proxy_set_header Origin "";
         proxy_read_timeout 30s;
     }
+    location /learning/ {
+        alias /var/www/learning/;
+        try_files $uri $uri/ /learning/index.html;
+    }
+    location /learning/api/ {
+        proxy_pass http://LEARNING_HOST:5902/api/;
+        # Admins upload course HTML files up to 10 MB
+        client_max_body_size 12m;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Same-origin SPA; don't forward Origin (see the kids/solar blocks)
+        proxy_set_header Origin "";
+        proxy_read_timeout 60s;
+    }
