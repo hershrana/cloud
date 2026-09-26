@@ -19,10 +19,11 @@
         proxy_set_header Origin "";
         proxy_read_timeout 30s;
     }
-    # Nemotron admin chat: image/PDF attachments make the JSON body large, and the
-    # upstream model can take minutes. Exact match, so it wins over /kids/api/ above.
-    location = /kids/api/admin/ai/nemotron/chat {
-        proxy_pass http://KIDS_HOST:5900/api/admin/ai/nemotron/chat;
+    # Admin AI routes (nemotron chat and friends): image/PDF attachments make the JSON
+    # body large, and the upstream model can take minutes. Longer prefix than
+    # /kids/api/ above, so it wins for every sub-route.
+    location /kids/api/admin/ai/ {
+        proxy_pass http://KIDS_HOST:5900/api/admin/ai/;
         client_max_body_size 56m;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
