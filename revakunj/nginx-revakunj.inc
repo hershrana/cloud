@@ -17,7 +17,9 @@
         # SPA and API are same-origin behind nginx; the backend CORS allowlist only
         # knows localhost, so don't forward Origin (empty value = header omitted).
         proxy_set_header Origin "";
-        proxy_read_timeout 30s;
+        client_max_body_size 56m;   # photos are sent as base64 inside the JSON body
+        proxy_read_timeout 180s;    # an AI model call can take up to 120s
+        proxy_send_timeout 180s;
     }
     # Admin AI routes (nemotron chat and friends): image/PDF attachments make the JSON
     # body large, and the upstream model can take minutes. Longer prefix than
@@ -33,6 +35,9 @@
         proxy_read_timeout 180s;
         proxy_send_timeout 180s;
     }
+    # Every /solar/api/ route goes to the solar backend; nginx turns none away, so the backend
+    # decides. Same limits as /kids/api/: solar serves the AI routes too (photos as base64 in the
+    # JSON body), and a refresh from the car or an AI call can run well past 30s.
     location /solar/api/ {
         proxy_pass http://SOLAR_HOST:5901/api/;
         proxy_set_header Host $host;
@@ -42,11 +47,13 @@
         # SPA and API are same-origin behind nginx; the backend CORS allowlist only
         # knows localhost, so don't forward Origin (empty value = header omitted).
         proxy_set_header Origin "";
-        proxy_read_timeout 30s;
+        client_max_body_size 56m;   # photos are sent as base64 inside the JSON body
+        proxy_read_timeout 180s;    # an AI model call can take up to 120s
+        proxy_send_timeout 180s;
     }
     # Passkey (WebAuthn) endpoints of the kids-money backend, reached without the /kids
-    # prefix: the Solar app signs in against the main backend at /api. Only these two
-    # paths, so the rest of /api stays free (see jira note above).
+    # prefix: the Solar app signs in against the main backend at /api. Still needed with
+    # the /api/ block below: jira's /api/auth is a longer prefix and would otherwise win.
     location /api/auth/passkey/ {
         proxy_pass http://KIDS_HOST:5900/api/auth/passkey/;
         proxy_set_header Host $host;
@@ -55,6 +62,20 @@
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header Origin "";
         proxy_read_timeout 30s;
+    }
+    # Main kids-money backend, also published at /api/ for the solar frontend. Jira and
+    # todo own longer prefixes (/api/jira, /api/auth, /api/tasks, ...) in
+    # rp-app-locations.inc; nginx picks the longest prefix, so those still win.
+    location /api/ {
+        proxy_pass http://KIDS_HOST:5900/api/;
+        client_max_body_size 56m;   # photos are sent as base64 inside the JSON body
+        proxy_read_timeout 180s;    # an AI model call can take up to 120s
+        proxy_send_timeout 180s;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Origin "";
     }
     location /api/account/passkeys {
         proxy_pass http://KIDS_HOST:5900;
